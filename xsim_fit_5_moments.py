@@ -1,22 +1,27 @@
+#!/usr/bin/env python3
 """
-Simulate from a true two‐component Gaussian mixture, fit mixtures by
-moment‐matching and EM, compute average log‐likelihood and cross‐entropy for each,
-and print an aligned table of parameters (with w1>=w2), average loglik, and
-cross‐entropies for the true, moment‐based, and EM fits.
+Simulate nsim times from a true two‐component Gaussian mixture, fit mixtures by
+moment‐matching and EM (optionally initialized at the moment fit), compute average
+log‐likelihood and cross‐entropy for each, and print an aligned table of parameters
+(with w1>=w2), average loglik, and cross‐entropies. Prints N and whether moment fit
+is used to initialize EM. Optionally plots, for each simulation, the true mixture
+density, the EM‐fit density, and a Gaussian matching the sample mean and std.
 """
 import numpy as np
 from scipy.optimize import fsolve, least_squares
 from sklearn.mixture import GaussianMixture
+import matplotlib.pyplot as plt
 
 # Simulation parameters
-nsim = 5         # number of Monte Carlo simulations
-N    = 1000      # number of observations per simulation
+nsim = 1     # number of Monte Carlo simulations
+N    = 10**3 # observations per simulation
 
 # True mixture parameters
-w_true, mu1_true, mu2_true, s1_true, s2_true = 0.3, -1.0, 2.0, 0.5, 1.5
+w_true, mu1_true, mu2_true, s1_true, s2_true = 0.3, -0.7, 0.3, 3.0, 1.0
 
-# Flag: if True, use moment‐matched params to initialize EM
-use_mom_init = True
+# Flags
+use_mom_init = True    # if True, initialize EM at moment‐matched fit
+do_plot      = True    # if True, plot densities for each simulation
 
 def sample_true_mixture(N):
     u = np.random.rand(N)
@@ -56,10 +61,6 @@ def fit_by_moments(m1, m2, m3, m4, m5):
     return w, mu1, mu2, abs(s1), abs(s2)
 
 def fit_by_em(x, init_params=None):
-    """
-    Fit a 2‐component GaussianMixture. If init_params and use_mom_init==True,
-    use those as initialization so EM cannot decrease the likelihood.
-    """
     if init_params is not None and use_mom_init:
         w, mu1, mu2, s1, s2 = init_params
         weights_init = np.array([w, 1-w])
@@ -83,14 +84,15 @@ def fit_by_em(x, init_params=None):
     s2_em = np.sqrt(gm.covariances_[1].flatten()[0])
     return w_em, mu1_em, mu2_em, s1_em, s2_em
 
-def mixture_logpdf(x, params):
+def mixture_pdf(x, params):
     w, mu1, mu2, s1, s2 = params
     p1 = w/(np.sqrt(2*np.pi)*s1)*np.exp(-0.5*((x-mu1)/s1)**2)
     p2 = (1-w)/(np.sqrt(2*np.pi)*s2)*np.exp(-0.5*((x-mu2)/s2)**2)
-    return np.log(p1 + p2 + 1e-300)
+    return p1 + p2
 
 def cross_entropy_and_ll(x, params):
-    logpdf = mixture_logpdf(x, params)
+    pdf_vals = mixture_pdf(x, params)
+    logpdf = np.log(pdf_vals + 1e-300)
     avg_ll = np.mean(logpdf)
     return avg_ll, -avg_ll
 
@@ -114,6 +116,7 @@ def main():
 
     sums = {'True':[0,0], 'MomFit':[0,0], 'EMFit':[0,0]}
 
+    xs = np.linspace(-5, 5, 1000)
     for _ in range(nsim):
         x = sample_true_mixture(N)
         m1, m2, m3, m4, m5 = empirical_moments(x, 5)
@@ -127,9 +130,9 @@ def main():
         ll_em,   ce_em   = cross_entropy_and_ll(x, p_em)
 
         for label, params, ll, ce in [
-            ('True', p_true, ll_true, ce_true),
-            ('MomFit', p_mom, ll_mom, ce_mom),
-            ('EMFit', p_em, ll_em, ce_em),
+            ('True',   p_true, ll_true,  ce_true),
+            ('MomFit', p_mom,  ll_mom,   ce_mom),
+            ('EMFit',  p_em,   ll_em,    ce_em),
         ]:
             w1, w2, mu1, mu2, s1, s2 = sort_params(params)
             print(f"{label:<8}{w1:8.4f}{w2:8.4f}{mu1:10.4f}{mu2:10.4f}"
@@ -138,6 +141,25 @@ def main():
             sums[label][1] += ce
 
         print(sep)
+
+        if do_plot:
+            # true PDF
+            pdf_true = mixture_pdf(xs, p_true)
+            # EM fit PDF
+            pdf_em   = mixture_pdf(xs, p_em)
+            # normal matching sample mean/std
+            m_data, s_data = np.mean(x), np.std(x)
+            pdf_norm = (1/np.sqrt(2*np.pi*s_data**2)) * np.exp(-0.5*((xs-m_data)/s_data)**2)
+
+            plt.figure()
+            plt.plot(xs, pdf_true, label="True mixture")
+            plt.plot(xs, pdf_em,   label="EM fit mixture")
+            plt.plot(xs, pdf_norm, '--', label="Normal match mean/std")
+            plt.title("Density comparison")
+            plt.xlabel("x")
+            plt.ylabel("Density")
+            plt.legend()
+            plt.show()
 
     # averages
     print("\nAverage over simulations:")
